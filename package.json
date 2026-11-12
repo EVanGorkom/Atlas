@@ -1,0 +1,27 @@
+{
+	"name": "atlas",
+	"version": "0.1.0",
+	"description": "Obsidian plugin that imports Wikipedia articles into your vault as linked notes.",
+	"main": "main.js",
+	"private": true,
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+		"typecheck": "tsc --noEmit --skipLibCheck"
+	},
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"wikipedia"
+	],
+	"devDependencies": {
+		"@types/node": "^26.6.6",
+		"esbuild": "^0.28.2",
+		"monkey-around": "^3.0.0",
+		"obsidian": "^1.14.4",
+		"typescript": "^7.0.2"
+	},
+	"dependencies": {
+		"mathml-to-latex": "^1.8.0"
+	}
+}

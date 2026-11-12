@@ -1,0 +1,13 @@
+node_modules/
+
+# Build output
+main.js
+*.js.map
+
+# Obsidian writes plugin settings here when loaded from a vault
+data.json
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
