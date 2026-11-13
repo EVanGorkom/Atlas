@@ -1,6 +1,6 @@
 import { Notice, PaneType, TFile, normalizePath, stringifyYaml } from "obsidian";
 import type AtlasPlugin from "../main";
-import { AtlasSettings, DEFAULT_SETTINGS, imageFolderOf, isLanguageCode } from "../settings";
+import { DEFAULT_SETTINGS, imageFolderOf, isLanguageCode } from "../settings";
 import { confirm } from "../ui/ConfirmModal";
 import { imageFilename } from "../util/filename";
 import type { RawArticle, WikipediaClient } from "../wiki/api";
@@ -14,13 +14,8 @@ import {
 	useLocalImage,
 } from "../wiki/clean";
 import { toMarkdown } from "../wiki/markdown";
+import { noteProperties, noteText, userProperties } from "./format";
 import { NoteNames } from "./names";
-
-const LICENSE = "CC BY-SA 4.0";
-const LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/";
-
-/** Properties Atlas writes. Anything else in a note's frontmatter is the user's. */
-const ATLAS_PROPERTIES = ["wikipedia_title", "lang", "source", "revid", "retrieved", "description", "categories", "license"];
 
 /** Images bigger than this (mostly animated GIFs, which Wikipedia doesn't scale) stay hotlinked. */
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -231,10 +226,7 @@ export class ArticleImporter {
 
 		const source = client.articleUrl(article.title);
 		const frontmatter = noteProperties(article, client.lang, source, this.plugin.settings, extraProperties);
-		const attribution =
-			`*From [${article.title}](${source}) on Wikipedia, ` +
-			`available under [${LICENSE}](${LICENSE_URL}).*`;
-		return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${toMarkdown(prepared)}\n\n---\n\n${attribution}\n`;
+		return noteText(stringifyYaml(frontmatter), toMarkdown(prepared), article.title, source);
 	}
 
 	/**
@@ -306,41 +298,7 @@ export class ArticleImporter {
 	}
 }
 
-/** "YYYY-MM-DD" in local time. (toISOString is UTC, which dates evening imports tomorrow.) */
-export function localDate(date: Date): string {
-	const pad = (n: number) => String(n).padStart(2, "0");
-	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
 
-/** The note's properties: Atlas's own, then any the user added (kept on update). */
-export function noteProperties(
-	article: Pick<RawArticle, "title" | "revId" | "description" | "categories">,
-	lang: string,
-	source: string,
-	settings: Pick<AtlasSettings, "categories">,
-	extra: Record<string, unknown> = {},
-	today: Date = new Date(),
-): Record<string, unknown> {
-	const properties: Record<string, unknown> = {
-		wikipedia_title: article.title,
-		lang,
-		source,
-		revid: article.revId,
-		retrieved: localDate(today),
-	};
-	if (article.description) properties.description = article.description;
-	if (settings.categories === "property" && article.categories.length) properties.categories = article.categories;
-	properties.license = LICENSE;
-	for (const [key, value] of Object.entries(extra)) {
-		if (!ATLAS_PROPERTIES.includes(key)) properties[key] = value;
-	}
-	return properties;
-}
-
-/** Frontmatter entries the user added to an Atlas note. */
-export function userProperties(frontmatter: Record<string, unknown>): Record<string, unknown> {
-	return Object.fromEntries(Object.entries(frontmatter).filter(([key]) => !ATLAS_PROPERTIES.includes(key)));
-}
 
 /** A notice showing what an import is doing, including waits for Wikipedia's rate limit. */
 class Progress {
