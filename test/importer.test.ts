@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { localDate } from "../src/note/importer";
+import { localDate } from "../src/note/format";
 
 it("dates an import by the local calendar day, not UTC", () => {
 	// 11:30 pm local time: still the 12th here, whatever the UTC date is.
@@ -8,7 +8,7 @@ it("dates an import by the local calendar day, not UTC", () => {
 	assert.equal(localDate(new Date(2026, 0, 5, 0, 15)), "2026-01-05");
 });
 
-import { noteProperties, userProperties } from "../src/note/importer";
+import { noteProperties, userProperties } from "../src/note/format";
 
 const ARTICLE = { title: "Albert Einstein", revId: 42, description: "Physicist", categories: ["1879 births", "Swiss physicists"] };
 const SOURCE = "https://en.wikipedia.org/wiki/Albert_Einstein";
@@ -37,4 +37,43 @@ it("keeps properties the user added when updating, but not stale Atlas ones", ()
 	assert.equal("categories" in updated, false);
 	assert.deepEqual(updated.tags, ["physics"]);
 	assert.deepEqual(Object.keys(updated).slice(-2), ["tags", "rating"]);
+});
+
+import { duration, plural } from "../src/note/bulk";
+
+it("words counts and durations for bulk-import messages", () => {
+	assert.equal(plural(1, "article"), "1 article");
+	assert.equal(plural(1234, "article"), "1,234 articles");
+	assert.equal(plural(2, "category", "categories"), "2 categories");
+	assert.equal(duration(20), "20 seconds");
+	assert.equal(duration(5 * 60), "5 minutes");
+	assert.equal(duration(1000 * 5), "83 minutes");
+	assert.equal(duration(2000 * 5), "2.8 hours");
+	assert.equal(duration(10_000 * 5), "14 hours");
+});
+
+import { toYaml } from "../src/note/format";
+
+it("writes YAML like Obsidian's for Atlas's properties, quoting only when needed", () => {
+	assert.equal(
+		toYaml({
+			wikipedia_title: "Star Wars: A New Hope",
+			source: "https://en.wikipedia.org/wiki/AC/DC",
+			revid: 42,
+			retrieved: "2025-03-20",
+			description: "1977 film",
+			categories: ["#hashtag", "Plain category", "true"],
+		}),
+		[
+			'wikipedia_title: "Star Wars: A New Hope"',
+			"source: https://en.wikipedia.org/wiki/AC/DC",
+			"revid: 42",
+			"retrieved: 2025-03-20",
+			"description: 1977 film",
+			"categories:",
+			'  - "#hashtag"',
+			"  - Plain category",
+			'  - "true"',
+		].join("\n"),
+	);
 });

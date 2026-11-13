@@ -1,9 +1,17 @@
 import { App, Notice, SuggestModal } from "obsidian";
-import type { SearchResult, WikipediaClient } from "../wiki/api";
+import type { SearchResult } from "../wiki/api";
 
 const DEBOUNCE_MS = 250;
 
-/** Search box with live Wikipedia title suggestions. */
+export interface SearchModalOptions {
+	placeholder: string;
+	search: (query: string) => Promise<SearchResult[]>;
+	onChoose: (result: SearchResult) => void;
+	/** Which of the given titles are already imported; those are marked "In vault". */
+	importedAmong?: (titles: string[]) => Set<string>;
+}
+
+/** Search box with live Wikipedia suggestions: articles, categories or list pages. */
 export class ArticleSearchModal extends SuggestModal<SearchResult> {
 	private latestRequest = 0;
 	private lastResults: SearchResult[] = [];
@@ -12,14 +20,11 @@ export class ArticleSearchModal extends SuggestModal<SearchResult> {
 
 	constructor(
 		app: App,
-		private readonly client: WikipediaClient,
-		private readonly onChoose: (result: SearchResult) => void,
-		/** Which of the given titles are already imported. */
-		private readonly importedAmong: (titles: string[]) => Set<string> = () => new Set(),
+		private readonly options: SearchModalOptions,
 	) {
 		super(app);
-		this.setPlaceholder(`Search ${client.lang}.wikipedia.org`);
-		this.emptyStateText = "No matching articles.";
+		this.setPlaceholder(options.placeholder);
+		this.emptyStateText = "Nothing found.";
 	}
 
 	async getSuggestions(query: string): Promise<SearchResult[]> {
@@ -32,10 +37,10 @@ export class ArticleSearchModal extends SuggestModal<SearchResult> {
 		if (request !== this.latestRequest) return this.lastResults;
 
 		try {
-			const results = await this.client.searchTitles(trimmed);
+			const results = await this.options.search(trimmed);
 			if (request === this.latestRequest) {
 				this.lastResults = results;
-				this.imported = this.importedAmong(results.map((r) => r.title));
+				this.imported = this.options.importedAmong?.(results.map((r) => r.title)) ?? new Set();
 			}
 			return results;
 		} catch (error) {
@@ -55,6 +60,6 @@ export class ArticleSearchModal extends SuggestModal<SearchResult> {
 	}
 
 	onChooseSuggestion(result: SearchResult): void {
-		this.onChoose(result);
+		this.options.onChoose(result);
 	}
 }
