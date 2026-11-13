@@ -278,8 +278,10 @@ export function embedLocalImages(article: PreparedArticle): void {
 
 /** "/wiki/Albert_Einstein#Early_life" → { title: "Albert Einstein", fragment: "Early life" } */
 export function parseWikiHref(href: string): { title: string; fragment: string | null } | null {
-	if (!href.startsWith("/wiki/")) return null;
-	const [pathAndQuery, hash] = splitOnce(href.slice("/wiki/".length), "#");
+	// The API's HTML links "/wiki/Title"; Parsoid's HTML (used in the dumps) links "./Title".
+	const prefix = href.startsWith("/wiki/") ? "/wiki/" : href.startsWith("./") ? "./" : null;
+	if (!prefix) return null;
+	const [pathAndQuery, hash] = splitOnce(href.slice(prefix.length), "#");
 	const [path] = splitOnce(pathAndQuery, "?");
 	const title = safeDecode(path)?.replace(/_/g, " ").trim();
 	if (!title) return null;

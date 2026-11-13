@@ -14,3 +14,4 @@ Thumbs.db
 
 # Test bundles
 .test-build/
+.tool-build/
