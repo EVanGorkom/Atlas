@@ -13,14 +13,17 @@ An Obsidian plugin that brings Wikipedia into your vault: articles become Markdo
 ## MVP scope
 
 - Command and ribbon button **Import Wikipedia article**: live search, pick a result, the full article is imported and opened.
-- Cleanup: footnote markers, edit links, navboxes, maintenance banners, text Wikipedia hides with CSS (sort keys, microformat dates, citation maintenance messages) and excluded sections are removed. Headings, lists, tables, code (as fenced blocks), images (hotlinked) and math (as LaTeX) are kept. Infoboxes become a lead image plus a two-column table; tables nested in table cells are flattened into the cell.
+- Cleanup: footnote markers, edit links, navboxes, maintenance banners, text Wikipedia hides with CSS (sort keys, microformat dates, citation maintenance messages) and excluded sections are removed. Headings, lists, tables, code (as fenced blocks), images and math (as LaTeX) are kept. Infoboxes become a lead image plus a two-column table; tables nested in table cells are flattened into the cell.
 - Every link to another article becomes `[[Wikipedia/Title|text]]`. Redirects are resolved at import, so `Einstein` links to `Albert Einstein`.
 - Clicking a link whose article isn't in the vault shows the Import / Open in browser dialog instead of creating an empty note.
 - Frontmatter: `wikipedia_title`, `lang`, `source`, `revid`, `retrieved`, `description`, `categories`, `license`.
+- Images: the lead image is downloaded into `Wikipedia/Images` and embedded as `![[…]]`, so it shows offline; the rest stay hotlinked. A setting switches to all images or none.
 - Search marks articles that are already in the vault; choosing one opens it.
-- Settings: Wikipedia language, folder, open after import, sections to leave out.
+- **Update this article from Wikipedia** (command, or right-click the note): checks the note's `revid` against Wikipedia and, after asking, replaces the article text with the latest revision. Properties you added are kept.
+- **Import the articles this note links to** (command, or right-click): imports every linked article that isn't in the vault yet, one at a time, with progress and a Cancel button.
+- Settings: Wikipedia language, folder, open after import, image downloads and folder, categories (property or left out), sections to leave out.
 
-**Later:** category and bulk import, updating changed articles, image download, Wikidata fields, multiple languages per vault.
+**Later:** category import, checking every article for updates at once, Wikidata fields, multiple languages per vault.
 
 ## Design decisions
 
@@ -30,7 +33,9 @@ An Obsidian plugin that brings Wikipedia into your vault: articles become Markdo
 | Unresolved-link clicks | Wrap `workspace.openLinkText` (via `monkey-around`) | One place every link click goes through, in reading view, Live Preview and on mobile. Only links into the Atlas folder are affected. |
 | Link resolution | `generator=links` for the article, falling back to `titles=` batches | About 2–3 requests per article instead of one per 50 links, which keeps clear of Wikimedia's rate limits. |
 | Math | MathML → LaTeX with `mathml-to-latex` | Wikipedia now serves MathML without the TeX source; Obsidian renders LaTeX. Falls back to keeping the MathML. |
-| Images | Hotlinked for now | Downloading the lead image for offline use is the next step. |
+| Images | Lead image downloaded by default; "all" and "none" are settings. Named after the original file (`Albert_Einstein_Head.jpg`) and shared between articles | The lead image is what makes a note recognisable offline, at ~25–100 KB. All images for Mount Fuji is 17 files, 0.5 MB. Icons under 40 px and files over 2 MB (unscaled animated GIFs) stay hotlinked. |
+| Updating articles | Replace the whole text after a confirmation; keep any frontmatter key Atlas doesn't write | Merging your edits into a new revision isn't reliable. Write your own notes in a separate note that links to the article, or add properties. |
+| Bulk import | One article at a time, 1 s apart, stopping if Wikipedia keeps answering 429 | Each article is 4–6 requests. Wikimedia limits clients without contact info in the User-Agent (`PROJECT_URL`). |
 | Unsafe titles | `AC/DC` is saved as `AC-DC.md`; the plugin's `data.json` remembers the real title | Some characters are illegal in filenames or break links. |
 | Titles differing only in case | The first title to claim a name keeps it; the other gets a numbered filename: `Red dwarf.md` (the star), `Red Dwarf (2).md` (the TV series), recorded in `data.json` | Obsidian resolves links case-insensitively, and so do the macOS and Windows file systems. Claims come from existing notes, not-yet-imported links in the vault, and `data.json`; see `src/note/names.ts`. |
 
@@ -91,6 +96,8 @@ scripts/test.mjs             bundles and runs the tests
 - Links written before titles differing only in case got separate filenames may still open the wrong one of the pair; deleting and re-importing the note that contains them fixes it.
 - Tables with merged cells (rowspan/colspan) become plain Markdown tables, so the merged layout is lost. Tables nested in cells are flattened to text.
 - Code inside table cells becomes one inline `<code>` per line, without highlighting.
+- Updating an article replaces anything you wrote in its text (the confirmation says so). Properties you added are kept.
+- Images in infobox data cells (flags, location maps) are dropped, as before; only the infobox's lead image is kept.
 - Category and bulk imports will need a request queue with pacing; the client already limits concurrency and backs off on HTTP 429.
 
 ## Attribution
