@@ -35,3 +35,5 @@ export function stringifyYaml(value: unknown): string {
 }
 export class PluginSettingTab {}
 export class Setting {}
+export class Modal {}
+export class ButtonComponent {}
