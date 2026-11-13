@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ResolvedTitle } from "../src/wiki/api";
-import { convertInfoboxes, embedLocalImages, prepareArticle, rewriteLinks, selectImages, useLocalImage } from "../src/wiki/clean";
+import { convertInfoboxes, embedLocalImages, parseWikiHref, prepareArticle, rewriteLinks, selectImages, useLocalImage } from "../src/wiki/clean";
 import { toMarkdown } from "../src/wiki/markdown";
 
 const HOST = "https://en.wikipedia.org";
@@ -181,5 +181,20 @@ describe("images", () => {
 		assert.match(md, /!\[\[Wikipedia\/Images\/Solvay\.jpg\]\]/);
 		assert.match(md, /!\[\]\(https:\/\/thumb\.wikimedia\.org\/c\/Icon\.svg/); // icons stay web images
 		assert.doesNotMatch(md, /Head\.jpg\/250px/);
+	});
+});
+
+describe("parseWikiHref", () => {
+	it("reads the API's /wiki/ links and the dumps' ./ links alike", () => {
+		const expected = { title: "Albert Einstein", fragment: "Early life" };
+		assert.deepEqual(parseWikiHref("/wiki/Albert_Einstein#Early_life"), expected);
+		assert.deepEqual(parseWikiHref("./Albert_Einstein#Early_life"), expected);
+		assert.deepEqual(parseWikiHref("./AC%2FDC?action=edit&redlink=1"), { title: "AC/DC", fragment: null });
+	});
+
+	it("ignores anything else", () => {
+		assert.equal(parseWikiHref("#cite_note-1"), null);
+		assert.equal(parseWikiHref("https://example.org/wiki/X"), null);
+		assert.equal(parseWikiHref("../Elsewhere"), null);
 	});
 });
