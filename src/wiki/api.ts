@@ -50,6 +50,8 @@ const MAX_BACKOFF_MS = 60_000;
  */
 export class WikipediaClient {
 	readonly host: string;
+	/** Called before waiting out a rate limit (HTTP 429/503), with the wait in milliseconds. */
+	onWait?: (ms: number) => void;
 
 	constructor(
 		readonly lang: string,
@@ -211,7 +213,9 @@ export class WikipediaClient {
 			}
 
 			if ((response.status === 429 || response.status === 503) && attempt < MAX_RETRIES) {
-				await delay(backoffMs(response, attempt));
+				const wait = backoffMs(response, attempt);
+				this.onWait?.(wait);
+				await delay(wait);
 				continue;
 			}
 			if (response.status === 429) {

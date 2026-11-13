@@ -54,9 +54,12 @@ export default class AtlasPlugin extends Plugin {
 	}
 
 	openSearch(lang: string = this.settings.language): void {
-		new ArticleSearchModal(this.app, this.client(lang), (result) => {
-			void this.importer.importAndOpen(result.title, lang);
-		}).open();
+		new ArticleSearchModal(
+			this.app,
+			this.client(lang),
+			(result) => void this.importer.importAndOpen(result.title, lang),
+			(titles) => this.importer.importedAmong(titles),
+		).open();
 	}
 
 	async loadPluginData(): Promise<void> {
