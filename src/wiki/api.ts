@@ -5,6 +5,14 @@ export interface SearchResult {
 	description: string | null;
 }
 
+export interface CategoryResult {
+	/** Full title, e.g. "Category:Physics". */
+	title: string;
+	/** Articles directly in the category. */
+	pages: number;
+	subcategories: number;
+}
+
 export interface RawArticle {
 	/** Canonical title, after following redirects. */
 	title: string;
@@ -95,6 +103,69 @@ export class WikipediaClient {
 			description: shortDescription(parse.properties),
 			categories,
 		};
+	}
+
+	/**
+	 * Categories whose name starts with `query`, with how many articles and subcategories
+	 * each holds. Titles keep their namespace prefix ("Category:Physics"), which differs by
+	 * language ("Kategorie:" on de.wikipedia.org).
+	 */
+	async searchCategories(query: string, limit = 10): Promise<CategoryResult[]> {
+		const data = await this.action({
+			action: "query",
+			generator: "prefixsearch",
+			gpssearch: query,
+			gpsnamespace: "14",
+			gpslimit: String(limit),
+			prop: "categoryinfo",
+		});
+		const pages = (data.query?.pages ?? []) as Json[];
+		return pages
+			.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+			.map((page) => ({
+				title: page.title,
+				pages: page.categoryinfo?.pages ?? 0,
+				subcategories: page.categoryinfo?.subcats ?? 0,
+			}));
+	}
+
+	/** Every article and subcategory directly in a category (full titles, with prefixes). */
+	async categoryMembers(category: string): Promise<{ pages: string[]; subcategories: string[] }> {
+		const pages: string[] = [];
+		const subcategories: string[] = [];
+		let next: Json | undefined = {};
+		while (next) {
+			const data = await this.action({
+				action: "query",
+				list: "categorymembers",
+				cmtitle: category,
+				cmtype: "page|subcat",
+				cmnamespace: "0|14",
+				cmlimit: "max",
+				...(next as Record<string, string>),
+			});
+			for (const member of (data.query?.categorymembers ?? []) as Json[]) {
+				if (member.ns === 0) pages.push(member.title);
+				else if (member.ns === 14) subcategories.push(member.title);
+			}
+			next = data.continue as Json | undefined;
+		}
+		return { pages, subcategories };
+	}
+
+	/**
+	 * Pages to import a list of articles from: articles ("Outline of physics", "List of …"),
+	 * project pages ("Wikipedia:Vital articles/Level/4/Physical sciences") and portals.
+	 */
+	async searchListPages(query: string, limit = 10): Promise<SearchResult[]> {
+		const data = await this.action({
+			action: "query",
+			list: "prefixsearch",
+			pssearch: query,
+			psnamespace: "0|4|100",
+			pslimit: String(limit),
+		});
+		return ((data.query?.prefixsearch ?? []) as Json[]).map((page) => ({ title: page.title, description: null }));
 	}
 
 	/**
