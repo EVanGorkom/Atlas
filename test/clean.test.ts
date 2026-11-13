@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ResolvedTitle } from "../src/wiki/api";
-import { convertInfoboxes, prepareArticle, rewriteLinks } from "../src/wiki/clean";
+import { convertInfoboxes, embedLocalImages, prepareArticle, rewriteLinks, selectImages, useLocalImage } from "../src/wiki/clean";
 import { toMarkdown } from "../src/wiki/markdown";
 
 const HOST = "https://en.wikipedia.org";
@@ -134,5 +134,52 @@ describe("nested tables", () => {
 	it("leave infoboxes inside tables for the infobox converter", () => {
 		const md = convert(`<table><tr><th>Layout</th></tr><tr><td>${INFOBOX}</td></tr></table>`);
 		assert.match(md, /\*\*Born\*\*/);
+	});
+});
+
+describe("images", () => {
+	const ARTICLE = `
+<table class="infobox"><tbody>
+<tr><th class="infobox-above">Albert Einstein</th></tr>
+<tr><td class="infobox-image"><span typeof="mw:File"><a href="/wiki/File:Head.jpg"><img src="//thumb.wikimedia.org/a/Head.jpg/250px-Head.jpg" width="250" height="309"></a></span><div class="infobox-caption">Einstein in 1947</div></td></tr>
+<tr><th class="infobox-label">Born</th><td class="infobox-data"><img src="//thumb.wikimedia.org/flag.svg/20px-flag.svg.png" width="20" height="13"> Ulm</td></tr>
+<tr><td class="infobox-full-data"><img src="//thumb.wikimedia.org/m/Map.png/250px-Map.png" width="250" height="250"><div>Location of Ulm</div></td></tr>
+</tbody></table>
+<p><img src="//thumb.wikimedia.org/c/Icon.svg/16px-Icon.svg.png" width="16" height="16"> Lead text.</p>
+<figure><img src="//thumb.wikimedia.org/b/Solvay.jpg/300px-Solvay.jpg" width="300" height="200"><figcaption>Solvay conference</figcaption></figure>`;
+
+	const prepare = () => prepareArticle(`<div class="mw-parser-output">${ARTICLE}</div>`, { host: HOST, excludedSections: [] });
+	const sources = (imgs: Element[]) => imgs.map((img) => img.getAttribute("src"));
+
+	it("lead mode picks the infobox image", () => {
+		assert.deepEqual(sources(selectImages(prepare(), "lead")), ["https://thumb.wikimedia.org/a/Head.jpg/250px-Head.jpg"]);
+	});
+
+	it("lead mode falls back to the first real image without an infobox", () => {
+		const article = prepareArticle(
+			'<div class="mw-parser-output"><img src="//x/icon.png" width="16" height="16"><figure><img src="//x/Photo.jpg" width="220" height="150"></figure></div>',
+			{ host: HOST, excludedSections: [] },
+		);
+		assert.deepEqual(sources(selectImages(article, "lead")), ["https://x/Photo.jpg"]);
+	});
+
+	it("all mode skips icons and infobox images the infobox drops; none mode picks nothing", () => {
+		const article = prepare();
+		assert.equal(selectImages(article, "all").length, 2);
+		assert.deepEqual(selectImages(article, "none"), []);
+	});
+
+	it("embeds downloaded images from the vault and keeps the rest hotlinked", () => {
+		const article = prepare();
+		const [lead, solvay] = selectImages(article, "all");
+		useLocalImage(lead, "Wikipedia/Images/Head.jpg");
+		useLocalImage(solvay, "Wikipedia/Images/Solvay.jpg");
+		convertInfoboxes(article);
+		embedLocalImages(article);
+		const md = toMarkdown(article);
+		assert.match(md, /^!\[\[Wikipedia\/Images\/Head\.jpg\]\]\n\*Einstein in 1947\*/m);
+		assert.match(md, /!\[\[Wikipedia\/Images\/Solvay\.jpg\]\]/);
+		assert.match(md, /!\[\]\(https:\/\/thumb\.wikimedia\.org\/c\/Icon\.svg/); // icons stay web images
+		assert.doesNotMatch(md, /Head\.jpg\/250px/);
 	});
 });

@@ -98,6 +98,18 @@ export class WikipediaClient {
 	}
 
 	/**
+	 * The current revision of an article, following redirects (the article may have been
+	 * renamed since it was imported). One small request; null if the article is gone.
+	 */
+	async latestRevision(title: string): Promise<{ title: string; revId: number } | null> {
+		const data = await this.action({ action: "query", titles: title, redirects: "1", prop: "revisions", rvprop: "ids" });
+		const page = (data.query?.pages as Json[] | undefined)?.[0];
+		const revId = page?.revisions?.[0]?.revid;
+		if (!page || page.missing || page.invalid || typeof revId !== "number") return null;
+		return { title: page.title, revId };
+	}
+
+	/**
 	 * Resolves the links found in an article to canonical article titles, following
 	 * redirects and flagging links that aren't articles. The map is keyed by the titles
 	 * passed in.
@@ -192,7 +204,31 @@ export class WikipediaClient {
 		return data;
 	}
 
+	/**
+	 * Downloads an image (a thumbnail from Wikimedia's servers), sharing the request limiter
+	 * and rate-limit handling with the API calls.
+	 */
+	async fetchImage(url: string): Promise<{ data: ArrayBuffer; contentType: string }> {
+		const host = new URL(url).host;
+		const response = await this.send({ url }, host);
+		const contentType = header(response, "content-type") ?? "";
+		if (!contentType.startsWith("image/")) {
+			throw new WikipediaError(`${host} sent ${contentType || "something"} instead of an image.`);
+		}
+		return { data: response.arrayBuffer, contentType };
+	}
+
 	private async request(param: RequestUrlParam): Promise<Json> {
+		const response = await this.send(param, `${this.lang}.wikipedia.org`);
+		try {
+			return response.json as Json;
+		} catch {
+			throw new WikipediaError(`${this.lang}.wikipedia.org sent an unexpected response.`);
+		}
+	}
+
+	/** One request with the shared limiter, the User-Agent, and retries on 429/503. */
+	private async send(param: RequestUrlParam, site: string): Promise<RequestUrlResponse> {
 		const request: RequestUrlParam = {
 			...param,
 			headers: {
@@ -209,7 +245,7 @@ export class WikipediaClient {
 			try {
 				response = await limiter.run(() => requestUrl(request));
 			} catch {
-				throw new WikipediaError(`Couldn't reach ${this.lang}.wikipedia.org. Check your connection.`);
+				throw new WikipediaError(`Couldn't reach ${site}. Check your connection.`);
 			}
 
 			if ((response.status === 429 || response.status === 503) && attempt < MAX_RETRIES) {
@@ -222,15 +258,17 @@ export class WikipediaClient {
 				throw new WikipediaError("Wikipedia is limiting requests right now. Try again in a minute.");
 			}
 			if (response.status >= 400) {
-				throw new WikipediaError(`${this.lang}.wikipedia.org returned an error (HTTP ${response.status}).`);
+				throw new WikipediaError(`${site} returned an error (HTTP ${response.status}).`);
 			}
-			try {
-				return response.json as Json;
-			} catch {
-				throw new WikipediaError(`${this.lang}.wikipedia.org sent an unexpected response.`);
-			}
+			return response;
 		}
 	}
+}
+
+/** A response header, whatever its capitalization. */
+function header(response: RequestUrlResponse, name: string): string | undefined {
+	const key = Object.keys(response.headers).find((k) => k.toLowerCase() === name);
+	return key ? response.headers[key] : undefined;
 }
 
 /** Follows normalization and redirects across one or more query responses. */
@@ -281,7 +319,7 @@ class RequestLimiter {
 const limiter = new RequestLimiter(MAX_CONCURRENT_REQUESTS);
 
 function backoffMs(response: RequestUrlResponse, attempt: number): number {
-	const retryAfter = Number(response.headers["retry-after"] ?? response.headers["Retry-After"]);
+	const retryAfter = Number(header(response, "retry-after"));
 	const ms = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : DEFAULT_BACKOFF_MS * 2 ** attempt;
 	return Math.min(ms, MAX_BACKOFF_MS);
 }
