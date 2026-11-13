@@ -11,3 +11,6 @@ data.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Test bundles
+.test-build/
