@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting, normalizePath } from "obsidian";
 import type AtlasPlugin from "./main";
+import type { ImageMode } from "./wiki/clean";
 
 export interface AtlasSettings {
 	/** Wikipedia language code, e.g. "en" for en.wikipedia.org. */
@@ -10,6 +11,12 @@ export interface AtlasSettings {
 	openAfterImport: boolean;
 	/** Section headings (case-insensitive) dropped on import, with everything under them. */
 	excludedSections: string[];
+	/** Which images to download into the vault for offline reading; the rest stay hotlinked. */
+	images: ImageMode;
+	/** Vault folder for downloaded images. Empty means "Images" inside the article folder. */
+	imageFolder: string;
+	/** Whether to keep Wikipedia's categories as a `categories` property. */
+	categories: "property" | "none";
 }
 
 export const DEFAULT_SETTINGS: AtlasSettings = {
@@ -26,7 +33,15 @@ export const DEFAULT_SETTINGS: AtlasSettings = {
 		"Further reading",
 		"External links",
 	],
+	images: "lead",
+	imageFolder: "",
+	categories: "property",
 };
+
+/** The folder downloaded images go to. */
+export function imageFolderOf(settings: AtlasSettings): string {
+	return normalizePath(settings.imageFolder.trim() || `${settings.folder || DEFAULT_SETTINGS.folder}/Images`);
+}
 
 const LANGUAGE_CODE = /^[a-z][a-z-]*$/;
 
@@ -86,6 +101,48 @@ export class AtlasSettingTab extends PluginSettingTab {
 					settings.openAfterImport = value;
 					await this.plugin.savePluginData();
 				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Download images")
+			.setDesc(
+				"Images saved in your vault can be read offline. Images that aren't downloaded are " +
+					"loaded from Wikipedia when you open the note. Applies to articles imported from now on.",
+			)
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOptions({ lead: "Lead image only", all: "All images", none: "None" })
+					.setValue(settings.images)
+					.onChange(async (value) => {
+						settings.images = value as ImageMode;
+						await this.plugin.savePluginData();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Image folder")
+			.setDesc("Where downloaded images are saved. Leave empty for an Images folder inside the article folder.")
+			.addText((text) =>
+				text
+					.setPlaceholder(imageFolderOf({ ...settings, imageFolder: "" }))
+					.setValue(settings.imageFolder)
+					.onChange(async (value) => {
+						settings.imageFolder = value.trim() ? normalizePath(value.trim()) : "";
+						await this.plugin.savePluginData();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Categories")
+			.setDesc("Wikipedia's categories for the article. Biographies can have more than 50.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOptions({ property: "Save as a property", none: "Leave out" })
+					.setValue(settings.categories)
+					.onChange(async (value) => {
+						settings.categories = value as AtlasSettings["categories"];
+						await this.plugin.savePluginData();
+					}),
 			);
 
 		new Setting(containerEl)

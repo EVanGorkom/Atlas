@@ -65,6 +65,19 @@ const JUNK_SELECTORS = [
 	".printfooter",
 	".catlinks",
 	".authority-control",
+	".navbar",
+	// Text Wikipedia hides with its own stylesheet, which we don't load: sort keys,
+	// microformat dates ("(1879-03-14)"), hidden infobox rows, citation maintenance notes.
+	'[style*="display:none"]',
+	'[style*="display: none"]',
+	".infobox-hiddenrow",
+	".citation-comment", // CS1 errors and maintenance messages, meant for editors
+	".cs1-maint",
+	".cs1-hidden-error",
+	// "See list" headers of an infobox's collapsed lists ({{collapsible list}}, {{hidden begin}});
+	// the lists themselves are kept, expanded.
+	".infobox .collapsible-list > div:first-child:not(.mw-collapsible-content)",
+	".infobox .hidden-title",
 ].join(", ");
 
 export function prepareArticle(html: string, options: PrepareOptions): PreparedArticle {
@@ -74,7 +87,9 @@ export function prepareArticle(html: string, options: PrepareOptions): PreparedA
 
 	root.querySelectorAll(JUNK_SELECTORS).forEach((el) => el.remove());
 	removeSections(root, new Set(options.excludedSections.map((s) => s.toLowerCase())));
+	convertCodeBlocks(root, placeholders);
 	convertMath(root, placeholders);
+	flattenNestedTables(root);
 	keepSuperAndSubscripts(root, placeholders);
 	fixImages(root, options.host);
 
@@ -98,6 +113,8 @@ export function rewriteLinks(
 	article: PreparedArticle,
 	resolved: Map<string, ResolvedTitle>,
 	folder: string,
+	/** Note filename for a title; the importer passes one that avoids case collisions. */
+	filenameFor: (title: string) => string = titleToFilename,
 ): Record<string, string> {
 	const renamed: Record<string, string> = {};
 	const prefix = folder && folder !== "/" ? `${folder}/` : "";
@@ -113,7 +130,7 @@ export function rewriteLinks(
 				unwrap(a);
 				return;
 			}
-			const filename = titleToFilename(target.title);
+			const filename = filenameFor(target.title);
 			if (filename !== target.title) renamed[filename] = target.title;
 
 			const heading = cleanHeading(wiki.fragment ?? target.fragment);
@@ -148,15 +165,15 @@ export function convertInfoboxes(article: PreparedArticle): void {
 		// Nested infoboxes are flattened into their parent's rows.
 		if (table.parentElement?.closest("table.infobox")) return;
 
-		const titleEl = table.querySelector(":scope > caption, .infobox-above, .infobox-title");
+		const titleEl = infoboxTitle(table);
 		const title = flatten(titleEl);
+		const lead = infoboxImage(table);
 		let image: string | null = null;
 		const rows: string[] = [];
 
-		const trs = table.querySelectorAll(":scope > tbody > tr, :scope > thead > tr, :scope > tr");
-		trs.forEach((tr) => {
+		rowsOf(table).forEach((tr) => {
 			if (titleEl && tr.contains(titleEl)) return;
-			const cells = Array.from(tr.children).filter((c) => c.tagName === "TH" || c.tagName === "TD");
+			const cells = cellsOf(tr);
 
 			if (cells.length >= 2) {
 				const label = tableCell(cells[0]);
@@ -167,9 +184,8 @@ export function convertInfoboxes(article: PreparedArticle): void {
 			const cell = cells[0];
 			if (!cell) return;
 
-			const img = cell.querySelector("img");
-			if (img) {
-				if (!image) image = imageMarkdown(img, flatten(cell.querySelector(".infobox-caption")));
+			if (cell.querySelector("img")) {
+				if (lead && cell.contains(lead)) image = imageMarkdown(lead, flatten(cell.querySelector(".infobox-caption")));
 				return;
 			}
 			const text = tableCell(cell);
@@ -185,6 +201,76 @@ export function convertInfoboxes(article: PreparedArticle): void {
 		const replacement = doc.createElement("p");
 		if (parts.length) replacement.textContent = article.placeholders.add(parts.join("\n\n"));
 		table.replaceWith(replacement);
+	});
+}
+
+/** The infobox's title element, if it has one. */
+function infoboxTitle(table: Element): Element | null {
+	return table.querySelector(":scope > caption, .infobox-above, .infobox-title");
+}
+
+/**
+ * The one image convertInfoboxes keeps for an infobox: the first image in a full-width
+ * (single-cell) row. Other images in it, such as location maps, are dropped.
+ */
+function infoboxImage(table: Element): HTMLImageElement | null {
+	const titleEl = infoboxTitle(table);
+	for (const tr of rowsOf(table)) {
+		if (titleEl && tr.contains(titleEl)) continue;
+		const cells = cellsOf(tr);
+		const img = cells.length === 1 ? cells[0].querySelector("img") : null;
+		if (img) return img;
+	}
+	return null;
+}
+
+function rowsOf(table: Element): Element[] {
+	return Array.from(table.querySelectorAll(":scope > tbody > tr, :scope > thead > tr, :scope > tr"));
+}
+
+function cellsOf(tr: Element): Element[] {
+	return Array.from(tr.children).filter((c) => c.tagName === "TH" || c.tagName === "TD");
+}
+
+export type ImageMode = "none" | "lead" | "all";
+
+/** Images narrower or shorter than this are icons (flags, edit pencils); never downloaded. */
+const MIN_IMAGE_SIZE = 40;
+
+/**
+ * The images to download, in document order: none, the lead image (the infobox's, or else
+ * the first real image in the article), or all of them. Icons are never downloaded, nor
+ * infobox images the infobox conversion drops.
+ */
+export function selectImages(article: PreparedArticle, mode: ImageMode): HTMLImageElement[] {
+	if (mode === "none") return [];
+	const kept = new Set(Array.from(article.root.querySelectorAll("table.infobox"), infoboxImage));
+	const images = Array.from(article.root.querySelectorAll("img")).filter(
+		(img) => isRealImage(img) && (!img.closest("table.infobox") || kept.has(img)),
+	);
+	if (mode === "all") return images;
+	const lead = images.find((img) => kept.has(img)) ?? images[0];
+	return lead ? [lead] : [];
+}
+
+function isRealImage(img: HTMLImageElement): boolean {
+	const size = (name: string) => Number(img.getAttribute(name) ?? Infinity);
+	return size("width") >= MIN_IMAGE_SIZE && size("height") >= MIN_IMAGE_SIZE;
+}
+
+/** Marks an image as downloaded to `path` in the vault; it'll be embedded from there. */
+export function useLocalImage(img: Element, path: string): void {
+	img.setAttribute("data-atlas-local", path);
+}
+
+/**
+ * Replaces downloaded images with Obsidian embeds (`![[path]]`). Run after convertInfoboxes,
+ * which handles the infobox image itself. Other images stay hotlinked.
+ */
+export function embedLocalImages(article: PreparedArticle): void {
+	article.root.querySelectorAll("img[data-atlas-local]").forEach((img) => {
+		const embed = `![[${img.getAttribute("data-atlas-local")}]]`;
+		img.replaceWith(img.ownerDocument.createTextNode(article.placeholders.add(embed)));
 	});
 }
 
@@ -284,6 +370,102 @@ function convertMath(root: Element, placeholders: Placeholders): void {
 	});
 }
 
+/** Wikipedia language names that Obsidian's highlighter knows under another name. */
+const CODE_LANGUAGE_ALIASES: Record<string, string> = {
+	python3: "python",
+	py3: "python",
+	"c++": "cpp",
+	text: "",
+	output: "",
+	"shell-session": "shell",
+	console: "shell",
+};
+
+/**
+ * Code samples → fenced code blocks.
+ *
+ * Wikipedia's highlighted code (`<div class="mw-highlight mw-highlight-lang-python"><pre>`)
+ * and plain preformatted text have no `<code>` inside the `<pre>`, so the Markdown converter
+ * treats them as ordinary text: indentation collapses, and a `# comment` line turns into a
+ * heading. The code is taken as plain text, so the highlighting spans go too.
+ */
+function convertCodeBlocks(root: Element, placeholders: Placeholders): void {
+	root.querySelectorAll("pre").forEach((pre) => {
+		const wrapper = pre.parentElement?.closest(".mw-highlight") ?? null;
+		const langClass = /(?:^|\s)mw-highlight-lang-(\S+)/.exec(wrapper?.className ?? "")?.[1]?.toLowerCase() ?? "";
+		const lang = CODE_LANGUAGE_ALIASES[langClass] ?? langClass;
+
+		const code = (pre.textContent ?? "").replace(/\u00a0/g, " ").replace(/\s+$/, "");
+		const target = wrapper && wrapper.contains(pre) ? wrapper : pre;
+		if (!code.trim()) {
+			target.remove();
+			return;
+		}
+		// A table cell is a single Markdown line: a fence there would break the table.
+		// A block element keeps it on its own line within the cell.
+		if (target.closest("td, th")) {
+			const block = root.ownerDocument.createElement("div");
+			block.textContent = placeholders.add(
+				code.split("\n").filter((line) => line.trim()).map(cellCode).join("<br>"),
+			);
+			target.replaceWith(block);
+			return;
+		}
+		// A fence must be longer than any run of backticks inside the code.
+		const longestRun = Math.max(2, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+		const fence = "`".repeat(longestRun + 1);
+
+		const block = root.ownerDocument.createElement("p");
+		block.textContent = placeholders.add(`${fence}${lang}\n${code}\n${fence}`);
+		target.replaceWith(block);
+	});
+}
+
+/**
+ * One line of code for a Markdown table cell. HTML, because a `|` would end the cell and
+ * Obsidian shows the escaped form `\|` literally inside backtick code.
+ */
+function cellCode(line: string): string {
+	const escaped = line
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\|/g, "&#124;")
+		.replace(/^ +/, (indent) => "&nbsp;".repeat(indent.length));
+	return `<code>${escaped}</code>`;
+}
+
+/**
+ * Tables inside table cells (legends, layout grids) → their cells' contents, with " · "
+ * between cells and line breaks between rows. A Markdown table can't contain another
+ * table, and Obsidian's converter would write the inner one as escaped pipes. Links and
+ * other content are moved, not copied, so they're still rewritten later. Infoboxes are
+ * left alone; they're converted separately.
+ */
+function flattenNestedTables(root: Element): void {
+	const doc = root.ownerDocument;
+	// Innermost first, so an inner table is flattened before the one around it.
+	const nested = Array.from(root.querySelectorAll("td table, th table")).reverse();
+	for (const table of nested) {
+		if (table.matches(".infobox")) continue;
+
+		const flat = doc.createElement("span");
+		const rows = table.querySelectorAll(":scope > tbody > tr, :scope > thead > tr, :scope > tr");
+		rows.forEach((tr) => {
+			const cells = Array.from(tr.children).filter(
+				(c) => (c.tagName === "TD" || c.tagName === "TH") && (c.textContent?.trim() || c.querySelector("img")),
+			);
+			if (!cells.length) return;
+			if (flat.childNodes.length) flat.append(doc.createElement("br"));
+			cells.forEach((cell, i) => {
+				if (i) flat.append(" · ");
+				flat.append(...Array.from(cell.childNodes));
+			});
+		});
+		table.replaceWith(flat);
+	}
+}
+
 function texSource(el: Element): string {
 	const annotated =
 		el.querySelector('annotation[encoding="application/x-tex"]')?.textContent ??
@@ -344,9 +526,10 @@ function fixImages(root: Element, host: string): void {
 }
 
 function imageMarkdown(img: Element, caption: string): string {
+	const local = img.getAttribute("data-atlas-local");
 	const alt = (img.getAttribute("alt") ?? "").replace(/[[\]]/g, "");
-	const src = img.getAttribute("src") ?? "";
-	return caption ? `![${alt}](${src})\n*${caption}*` : `![${alt}](${src})`;
+	const image = local ? `![[${local}]]` : `![${alt}](${img.getAttribute("src") ?? ""})`;
+	return caption ? `${image}\n*${caption}*` : image;
 }
 
 /** Text content of an element, with line breaks and list items turned into " · ". */

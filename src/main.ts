@@ -1,5 +1,6 @@
-import { Plugin } from "obsidian";
+import { Plugin, TFile } from "obsidian";
 import { installLinkInterceptor } from "./links/interceptor";
+import { importLinkedArticles } from "./note/bulk";
 import { ArticleImporter } from "./note/importer";
 import { AtlasSettings, AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 import { ArticleSearchModal } from "./ui/ArticleSearchModal";
@@ -45,7 +46,58 @@ export default class AtlasPlugin extends Plugin {
 		});
 		this.addRibbonIcon("globe", "Import Wikipedia article", () => this.openSearch());
 
+		this.addCommand({
+			id: "update-article",
+			name: "Update this article from Wikipedia",
+			checkCallback: (checking) => {
+				const file = this.activeArticle();
+				if (!file) return false;
+				if (!checking) void this.importer.updateNote(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "import-linked-articles",
+			name: "Import the articles this note links to",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) void importLinkedArticles(this, file);
+				return true;
+			},
+		});
+
+		// Right-click menu on an imported article.
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				if (!(file instanceof TFile) || !this.isArticle(file)) return;
+				menu.addItem((item) =>
+					item
+						.setTitle("Update from Wikipedia")
+						.setIcon("refresh-cw")
+						.onClick(() => void this.importer.updateNote(file)),
+				);
+				menu.addItem((item) =>
+					item
+						.setTitle("Import linked articles")
+						.setIcon("download")
+						.onClick(() => void importLinkedArticles(this, file)),
+				);
+			}),
+		);
+
 		installLinkInterceptor(this);
+	}
+
+	/** The active note, if it's an imported article. */
+	private activeArticle(): TFile | null {
+		const file = this.app.workspace.getActiveFile();
+		return file && this.isArticle(file) ? file : null;
+	}
+
+	private isArticle(file: TFile): boolean {
+		return typeof this.app.metadataCache.getFileCache(file)?.frontmatter?.wikipedia_title === "string";
 	}
 
 	/** A client for one language's Wikipedia. Cheap to create; holds no state. */
@@ -54,9 +106,12 @@ export default class AtlasPlugin extends Plugin {
 	}
 
 	openSearch(lang: string = this.settings.language): void {
-		new ArticleSearchModal(this.app, this.client(lang), (result) => {
-			void this.importer.importAndOpen(result.title, lang);
-		}).open();
+		new ArticleSearchModal(
+			this.app,
+			this.client(lang),
+			(result) => void this.importer.importAndOpen(result.title, lang),
+			(titles) => this.importer.importedAmong(titles),
+		).open();
 	}
 
 	async loadPluginData(): Promise<void> {

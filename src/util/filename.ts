@@ -22,3 +22,33 @@ export function titleToFilename(title: string): string {
 		.replace(/[. ]+$/, "");
 	return name || "Untitled article";
 }
+
+/** Image formats Obsidian can embed. */
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "bmp"]);
+
+/**
+ * Turns a Wikimedia image URL into a filename for the downloaded copy, or null if it isn't
+ * an image Obsidian can show. Thumbnails are named after the original file, keeping the
+ * thumbnail's own extension (an SVG's thumbnail is a PNG):
+ *
+ *   …/thumb/2/28/Albert_Einstein_Head.jpg/250px-Albert_Einstein_Head.jpg → "Albert_Einstein_Head.jpg"
+ *   …/thumb/d/d7/Signature.svg/250px-Signature.svg.png                   → "Signature.svg.png"
+ *   …/commons/6/65/Pythag_anim.gif                                       → "Pythag_anim.gif"
+ */
+export function imageFilename(url: string): string | null {
+	let last: string;
+	try {
+		last = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+	} catch {
+		return null;
+	}
+	const name = last
+		// Thumbnail size prefixes: "250px-", "lossless-page1-250px-", "page2-120px-".
+		.replace(/^(?:[a-z]+-)*(?:page\d+-)?\d+px-/, "")
+		.replace(/[\\/:*?"<>|#^[\]]/g, "-")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/^\.+/, "");
+	const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
+	return name && extension && IMAGE_EXTENSIONS.has(extension) ? name : null;
+}

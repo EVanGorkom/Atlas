@@ -55,6 +55,15 @@ function handleMissingArticle(
 		const title = plugin.titleIndex[filename] ?? filename;
 		const lang = sourceLanguage(plugin, sourcePath) ?? plugin.settings.language;
 
+		// Already imported under another filename (e.g. "Red Dwarf (2)" because "Red dwarf"
+		// was taken): open that note, keeping any #heading from the link.
+		const existing = importer.existingNote(title);
+		if (existing) {
+			const subpath = linktext.slice(linktext.indexOf(linkpath) + linkpath.length);
+			void app.workspace.openLinkText(existing.path.replace(/\.md$/, "") + subpath, sourcePath, newLeaf);
+			return true;
+		}
+
 		new MissingArticleModal(app, {
 			title,
 			lang,
